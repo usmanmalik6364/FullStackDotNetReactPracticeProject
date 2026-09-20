@@ -11,7 +11,7 @@ public class ApplicationDbContext : DbContext
     }
 
     public DbSet<Contractor> Contractors => Set<Contractor>();
-
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Contractor>(entity =>
@@ -43,6 +43,25 @@ public class ApplicationDbContext : DbContext
 
             entity.Property(x => x.RowVersion)
                     .IsRowVersion();
+        });
+        modelBuilder.Entity<AuditLog>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+
+            entity.Property(x => x.EntityType)
+                .HasMaxLength(100)
+                .IsRequired();
+
+            entity.Property(x => x.EntityId)
+                .HasMaxLength(100)
+                .IsRequired();
+
+            entity.Property(x => x.Action)
+                .HasMaxLength(100)
+                .IsRequired();
+
+            entity.Property(x => x.CreatedAtUtc)
+                .IsRequired();
         });
     }
 }

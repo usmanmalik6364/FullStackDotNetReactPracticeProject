@@ -16,4 +16,7 @@ public interface IContractorService
     Guid id,
     UpdateContractorRequest request,
     CancellationToken cancellationToken);
+    Task<IReadOnlyList<ContractorResponse>> GetByCompanyAsync(
+    string companyName,
+    CancellationToken cancellationToken);
 }

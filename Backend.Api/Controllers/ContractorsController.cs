@@ -65,4 +65,16 @@ public class ContractorsController : ControllerBase
 
         return Ok(contractor);
     }
+
+    [HttpGet]
+    public async Task<ActionResult<IReadOnlyList<ContractorResponse>>> GetByCompany(
+    [FromQuery] string companyName,
+    CancellationToken cancellationToken)
+    {
+        var contractors = await _service.GetByCompanyAsync(
+            companyName,
+            cancellationToken);
+
+        return Ok(contractors);
+    }
 }

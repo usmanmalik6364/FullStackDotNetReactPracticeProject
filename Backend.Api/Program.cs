@@ -12,7 +12,13 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(
         builder.Configuration.GetConnectionString("DefaultConnection"));
 });
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration =
+        builder.Configuration.GetConnectionString("Redis");
 
+    options.InstanceName = "BackendApi:";
+});
 builder.Services.AddScoped<IContractorService, ContractorService>();
 
 var app = builder.Build();
