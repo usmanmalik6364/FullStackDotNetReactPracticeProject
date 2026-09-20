@@ -1,3 +1,4 @@
+using Backend.Api.Caching;
 using Backend.Api.Data;
 using Backend.Api.DTOs;
 using Backend.Api.Exceptions;
@@ -11,75 +12,88 @@ namespace Backend.Api.Services;
 public class ContractorService : IContractorService
 {
     private readonly ApplicationDbContext _db;
-    private readonly IDistributedCache _cache;
+    private readonly ICacheService _cache;
+    private readonly CacheLockProvider _cacheLocks;
 
     public ContractorService(
-        ApplicationDbContext db,
-        IDistributedCache cache)
+    ApplicationDbContext db,
+    ICacheService cache,
+    CacheLockProvider cacheLocks)
     {
         _db = db;
         _cache = cache;
+        _cacheLocks = cacheLocks;
     }
+
     public async Task<ContractorResponse?> GetByIdAsync(
-        Guid id,
-        CancellationToken cancellationToken)
+     Guid id,
+     CancellationToken cancellationToken)
     {
         var cacheKey = $"contractor:{id}";
 
         var cachedContractor =
-            await _cache.GetStringAsync(
+            await _cache.GetAsync<ContractorResponse>(
                 cacheKey,
                 cancellationToken);
 
         if (cachedContractor is not null)
         {
-            Console.WriteLine("CACHE HIT");
-
-            return JsonSerializer.Deserialize<ContractorResponse>(
-                cachedContractor);
+            return cachedContractor;
         }
 
-        Console.WriteLine("CACHE MISS");
+        var cacheLock = _cacheLocks.GetLock(cacheKey);
 
-        var contractor = await _db.Contractors
-            .AsNoTracking()
-            .Where(x => x.Id == id)
-            .Select(x => new ContractorResponse
-            {
-                Id = x.Id,
-                ContractorNumber = x.ContractorNumber,
-                Name = x.Name,
-                CompanyName = x.CompanyName,
-                IsActive = x.IsActive,
-                CreatedAtUtc = x.CreatedAtUtc,
-                RowVersion = Convert.ToBase64String(x.RowVersion)
-            })
-            .FirstOrDefaultAsync(cancellationToken);
+        await cacheLock.WaitAsync(cancellationToken);
 
-        if (contractor is null)
+        try
         {
-            return null;
-        }
+            cachedContractor =
+                await _cache.GetAsync<ContractorResponse>(
+                    cacheKey,
+                    cancellationToken);
 
-        var serializedContractor =
-            JsonSerializer.Serialize(contractor);
-
-        await _cache.SetStringAsync(
-            cacheKey,
-            serializedContractor,
-            new DistributedCacheEntryOptions
+            if (cachedContractor is not null)
             {
-                AbsoluteExpirationRelativeToNow =
-                    TimeSpan.FromMinutes(5)
-            },
-            cancellationToken);
+                return cachedContractor;
+            }
 
-        return contractor;
+            var contractor = await _db.Contractors
+                .AsNoTracking()
+                .Where(x => x.Id == id)
+                .Select(x => new ContractorResponse
+                {
+                    Id = x.Id,
+                    ContractorNumber = x.ContractorNumber,
+                    Name = x.Name,
+                    CompanyName = x.CompanyName,
+                    IsActive = x.IsActive,
+                    CreatedAtUtc = x.CreatedAtUtc,
+                    RowVersion = Convert.ToBase64String(x.RowVersion)
+                })
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (contractor is null)
+            {
+                return null;
+            }
+
+            await _cache.SetAsync(
+                cacheKey,
+                contractor,
+                TimeSpan.FromMinutes(5),
+                cancellationToken);
+
+            return contractor;
+        }
+        finally
+        {
+            cacheLock.Release();
+        }
     }
 
     public async Task<ContractorResponse> CreateAsync(
-CreateContractorRequest request,
-CancellationToken cancellationToken)
+    CreateContractorRequest request,
+    CancellationToken cancellationToken)
     {
         await using var transaction =
             await _db.Database.BeginTransactionAsync(cancellationToken);
@@ -171,6 +185,11 @@ CancellationToken cancellationToken)
         try
         {
             await _db.SaveChangesAsync(cancellationToken);
+            var cacheKey = $"contractor:{id}";
+
+            await _cache.RemoveAsync(
+                        $"contractor:{id}",
+                        cancellationToken);
         }
         catch (DbUpdateConcurrencyException)
         {
