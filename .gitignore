@@ -56,6 +56,3 @@ CodeCoverage/
 TestResult.xml
 nunit-*.xml
 
-# Local application configuration / secrets
-Backend.Api/appsettings.json
-Backend.Api/appsettings.Development.json
