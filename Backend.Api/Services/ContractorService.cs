@@ -14,47 +14,75 @@ public class ContractorService : IContractorService
     private readonly ApplicationDbContext _db;
     private readonly ICacheService _cache;
     private readonly CacheLockProvider _cacheLocks;
+    private readonly IDistributedLockService _distributedLock;
 
     public ContractorService(
     ApplicationDbContext db,
     ICacheService cache,
-    CacheLockProvider cacheLocks)
+    CacheLockProvider cacheLocks,
+    IDistributedLockService distributedLock)
     {
         _db = db;
         _cache = cache;
         _cacheLocks = cacheLocks;
+        _distributedLock = distributedLock;
     }
 
     public async Task<ContractorResponse?> GetByIdAsync(
-     Guid id,
-     CancellationToken cancellationToken)
+    Guid id,
+    CancellationToken cancellationToken)
     {
         var cacheKey = $"contractor:{id}";
 
-        var cachedContractor =
+        var cached =
             await _cache.GetAsync<ContractorResponse>(
                 cacheKey,
                 cancellationToken);
 
-        if (cachedContractor is not null)
+        if (cached is not null)
         {
-            return cachedContractor;
+            return cached;
         }
 
-        var cacheLock = _cacheLocks.GetLock(cacheKey);
+        var lockKey = $"lock:contractor:{id}";
+        var lockToken = Guid.NewGuid().ToString();
 
-        await cacheLock.WaitAsync(cancellationToken);
+        var acquired =
+            await _distributedLock.AcquireAsync(
+                lockKey,
+                lockToken,
+                TimeSpan.FromSeconds(5));
+
+        if (!acquired)
+        {
+            for (var attempt = 0; attempt < 5; attempt++)
+            {
+                await Task.Delay(
+                    TimeSpan.FromMilliseconds(100),
+                    cancellationToken);
+
+                var cachedResult =
+                    await _cache.GetAsync<ContractorResponse>(
+                        cacheKey,
+                        cancellationToken);
+
+                if (cachedResult is not null)
+                {
+                    return cachedResult;
+                }
+            }
+        }
 
         try
         {
-            cachedContractor =
+            cached =
                 await _cache.GetAsync<ContractorResponse>(
                     cacheKey,
                     cancellationToken);
 
-            if (cachedContractor is not null)
+            if (cached is not null)
             {
-                return cachedContractor;
+                return cached;
             }
 
             var contractor = await _db.Contractors
@@ -68,9 +96,11 @@ public class ContractorService : IContractorService
                     CompanyName = x.CompanyName,
                     IsActive = x.IsActive,
                     CreatedAtUtc = x.CreatedAtUtc,
-                    RowVersion = Convert.ToBase64String(x.RowVersion)
+                    RowVersion = Convert.ToBase64String(
+                        x.RowVersion)
                 })
-                .FirstOrDefaultAsync(cancellationToken);
+                .FirstOrDefaultAsync(
+                    cancellationToken);
 
             if (contractor is null)
             {
@@ -87,10 +117,11 @@ public class ContractorService : IContractorService
         }
         finally
         {
-            cacheLock.Release();
+            await _distributedLock.ReleaseAsync(
+                lockKey,
+                lockToken);
         }
     }
-
     public async Task<ContractorResponse> CreateAsync(
     CreateContractorRequest request,
     CancellationToken cancellationToken)
